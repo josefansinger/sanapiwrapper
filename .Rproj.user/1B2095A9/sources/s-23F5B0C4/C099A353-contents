@@ -1,0 +1,936 @@
+# script for analysis and plotting of historic crypto market data
+# accessing the CoinGecko API (REST) directly https://www.coingecko.com/en/api#
+# accessing the Santiment API (GraphQL) directly https://github.com/santiment/san-sdk
+
+#install.packages("jsonlite")      # JSON file manipulations
+#install.packages("tidyr")         # dataframe manipulations https://tidyr.tidyverse.org
+#install.packages("gtrendsR")      # Google Trends https://github.com/PMassicotte/gtrendsR
+#install.packages("TTR")           # Technical Trading Rules
+#install.packages("signal")        # Savitzky Golay sgolayfilt()
+#install.packages("splus2R")       # peak detection peaks()
+#install_github("ropensci/ghql")   # GraphQL package for Santiment API
+#install.packages("imputeTS")      # spline interpolation na_interpolation()
+
+#install.packages("devtools")
+#library(devtools)
+
+#' @import jsonlite
+#' @import tidyr
+#' @import gtrendsR
+#' @import TTR
+#' @import ghql
+#' @import signal
+#' @import splus2R
+#' @import imputeTS
+
+# switch off scientific notation
+# better for unix time stamps
+options(scipen=999)
+
+# important dates
+dates.btcusd <- c("2011-06-08", "2013-04-09", "2013-12-04", "2017-12-17", "2018-12-15", "2019-06-27", "2020-03-12")
+dates.ethusd <- c("2016-03-13","2016-06-17","2017-06-12","2017-09-01","2018-01-13", "2018-12-15", "2019-06-27", "2020-3-12")
+
+#' Simple Moving Average without leading NA.
+#'
+#' @param x input vector
+#' @param n number of periods to average over
+#'
+#' @return simple moving averages
+#'
+#' @export
+SMAnoNA <- function(x, n = 10)
+{
+  # extend input vector x by n elements
+  x <- c(rep(x[1], n), x)
+
+  # evaluate simple moving average
+  sma <- SMA(x, n=n)
+
+  # remove first n elements again
+  sma <- sma[-(1:n)]
+
+  return(sma)
+}
+
+#' Exponential Moving Average without leading NA.
+#'
+#' @param x input vector
+#' @param n number of periods to average over
+#'
+#' @return exponential moving averages
+#'
+#' @export
+EMAnoNA <- function(x, n = 10)
+{
+  # extend input vector x by n elements
+  x <- c(rep(x[1], n), x)
+
+  # evaluate exponential moving average
+  ema <- EMA(x, n=n)
+
+  # remove first n elements again
+  ema <- ema[-(1:n)]
+
+  return(ema)
+}
+
+#' Scale series <x> into the range of series <y>.
+#'
+#' The linear scaling is done in log space, since both series will be plotted in log scale.
+#'
+#' @param x series to be scaled
+#' @param y series providing the range i.e. minimum and maximum
+#'
+#' @return scaled version of series <x>
+#'
+#' @export
+scaleRange <- function(x, y)
+{
+  # transform into log space
+  x <- log10(x)
+  y <- log10(y)
+
+  # determine slope and offset of linear transformation and perform transformation
+  a <- (max(y, na.rm=TRUE)-min(y, na.rm=TRUE))/(max(x, na.rm=TRUE)-min(x, na.rm=TRUE))
+  b <- max(y, na.rm=TRUE) - a*max(x, na.rm=TRUE)
+  x <- a*x+b
+
+  # transform back to linear space
+  x <- 10^x
+
+  return(x)
+}
+
+#' Get historical Google trends hits.
+#'
+#' @param search.term Google search term
+#' @param from start of the time window
+#' @param to end of the time window
+#'
+#' @return table with columns (date, hits)
+#'
+#' @export
+googleTrends <- function(search.term, from = '2004-01-01', to = Sys.Date())
+{
+  from.corrected <- max(as.Date(from), as.Date('2004-01-01'))
+  to.corrected <- min(as.Date(to), Sys.Date())
+  time.range <- paste(as.character(from.corrected)," ",as.character(to.corrected),sep="")
+
+  r <- gtrends(c(search.term), geo = c(""), time = time.range, onlyInterest = TRUE)
+  r <- r$interest_over_time
+  r <- r[,c('date','hits')]
+  r$hits[which(r$hits == '<1')] <- '0'
+  r$hits <- as.numeric(r$hits)
+
+  return(r)
+}
+
+#' Get daily historical Google trends hits.
+#'
+#' Takes much (!) longer since pauses between API calls required in order to prevent time-outs.
+#'
+#' @param search.term Google search term
+#' @param from start of the time window
+#' @param to end of the time window
+#'
+#' @return table with columns (date, hits)
+#'
+#' @export
+googleTrendsDaily <- function(search.term, from = '2004-01-01', to = Sys.Date())
+{
+  from.corrected <- max(as.Date(from), as.Date('2004-01-01'))
+  to.corrected <- min(as.Date(to), Sys.Date())
+
+  # construct all intervals of monthly length in this period
+  date <- seq(from.corrected, to.corrected, by="days")
+  first.day <- as.Date(paste(format(as.Date(date), "%Y-%m"),"-01",sep=""))
+  last.day <- as.Date(paste(format(first.day+40, "%Y-%m"),"-01",sep=""))-1
+  last.day <- pmin(last.day, Sys.Date())
+  # TO DO: If today is the first of the month, say 2023-05-01, then time range is a single day i.e. '2023-05-01 2023-05-01' and the API call will fail.
+  first.day <- unique(first.day)
+  last.day <- unique(last.day)
+  time.ranges <- paste(as.character(first.day)," ",as.character(last.day),sep="")
+
+  # accumulate daily hits by calling Google Trends API for each month interval
+  trends.daily <- NULL
+  for (r in time.ranges)
+  {
+    result <- gtrends(c(search.term), geo = c(""), time = r, onlyInterest = TRUE)
+    trends.daily <- rbind(trends.daily, result$interest_over_time)
+    # Small pause between requests. Prevents time-outs from Google.
+    # Note there appears to be also an absolute daily (?) limit.
+    Sys.sleep(1)
+  }
+  trends.daily$hits[which(trends.daily$hits == '<1')] <- '0'
+  trends.daily$hits <- as.numeric(trends.daily$hits)
+  trends.daily$month <- format(as.Date(trends.daily$date), "%Y-%m")
+  trends.daily <- trends.daily[,c('date','hits','month')]
+
+  # get monthly hits by calling Google Trends API for a long time interval (2004 until now)
+  # Needs to stay fixed. At thhis large time range, Google Trends returns monthly data.
+  time.range <- paste('2004-01-01 ',as.character(Sys.Date()),sep="")
+  trends.monthly <- gtrends(c(search.term), geo = c(""), time = time.range, onlyInterest = TRUE)
+  trends.monthly <- trends.monthly$interest_over_time
+  trends.monthly$hits[which(trends.monthly$hits == '<1')] <- '0'
+  trends.monthly$hits <- as.numeric(trends.monthly$hits)
+  trends.monthly$month <- format(as.Date(trends.monthly$date), "%Y-%m")
+  trends.monthly <- trends.monthly[,c('date','hits','month')]
+
+  # combine daily and monthly results
+  # use the monthly hits to scale the daily hits
+  trends <- merge(trends.daily, trends.monthly, by='month', all=FALSE)
+  trends$hits <- trends$hits.x * trends$hits.y / 100
+  trends$date <- trends$date.x
+  trends <- trends[,c('date','hits')]
+  trends <- trends[which(as.Date(trends$date) >= from.corrected),]
+  trends <- trends[which(as.Date(trends$date) <= to.corrected),]
+
+  return(trends)
+}
+
+#' Returns the absolute price change with respect to the previous day.
+#'
+#' @param price vector of historical prices
+#'
+#' @return absolute price difference with respect to the previous day
+#'
+#' @export
+priceChangeAbsolute <- function(price)
+{
+  # price the day before
+  p <- price
+  p <- p[-length(p)]
+  p <- c(p[1], p)
+
+  return(price-p)
+}
+
+#' Returns the relative price change with respect to the previous day.
+#'
+#' @param price vector of historical prices
+#'
+#' @return relative price change with respect to the previous day
+#'
+#' @export
+priceChangePercentage <- function(price)
+{
+  # price the day before
+  p <- price
+  p <- p[-length(p)]
+  p <- c(p[1], p)
+
+  return((price-p)/p*100)
+}
+
+#' Returns the normalised Mayer Multiple (MM).
+#'
+#' See Bitcoin and Trace Mayer.
+#' measures deviation from (exponential) moving average
+#' log --> below/above i.e. losses/gains are symmetric
+#' standard deviation --> hopefully universal thresholds across different assets
+#'
+#' @param x time series such as price, volume etc.
+#' @param n number of periods in time series x, for example days
+#'
+#' @return Mayer Multiple
+#'
+#' @export
+MM <- function(x, n)
+{
+  # exponential moving average
+  ema <- EMA(x, n=n)
+
+  # logarithmic multiple
+  mm <- log(x/ema)
+
+  # scale by standard deviation
+  mm <- mm/sd(mm, na.rm = TRUE)
+
+  return(mm)
+}
+
+#' Calculate technical indicators.
+#'
+#' Note. The input data might contain missing dates. We never check. Moving averages are consequently incorrectly shifted.
+#'
+#' @param data data frame with a column <price>
+#'
+#' @return same data frame but with additional columns containing the technical indicators
+#'
+#' @export
+calculateTechnicalIndicators <- function(data)
+{
+  # price changes
+  data$price.change.absolute <- priceChangeAbsolute(data$price)
+  data$price.change.percentage <- priceChangePercentage(data$price)
+
+  # Exponential Moving Average (EMA)
+  data$EMA50 <- EMA(data$price, n=50)
+  data$EMA200 <- EMA(data$price, n=200)
+
+  # normalised Mayer Multiple (MM)
+  data$MM50 <- MM(data$price, n=50)
+  data$MM200 <- MM(data$price, n=200)
+
+  # Relative Strengt Index (RSI)
+  data$RSI50 <- RSI(data$price, n=50)
+  data$RSI200 <- RSI(data$price, n=200)
+
+  # determine 1-2-3 entries and exits
+  data$days.since.last.entry <- daysSinceLastEntry(data$price)
+  data$days.since.last.exit <- daysSinceLastExit(data$price)
+
+  # # determine Savitzky-Golay entries and exits
+  data$days.since.last.sg.entry <- daysSinceLastSavitzkyGolayEntry(data$price)
+  data$days.since.last.sg.exit <- daysSinceLastSavitzkyGolayExit(data$price)
+
+  return(data)
+}
+
+#' Position of local maxima.
+#'
+#' Finds the local maxima in vector <x>. The maxima have to fulfil two conditions.
+#' (1) The maximum must be greater than any element within the window +/-((<span>-1)/2)
+#' (2) The relative change must be greater than <threshold> within the window +/-<span>
+#'
+#' Wraps and extends peaks() from splus2R package.
+#'
+#' @param x vector
+#' @param span window size
+#' @param threshold significance threshold
+#' @param strict logical flag: strictly greater
+#'
+#' @return position of maxima in <x>
+#'
+#' @export
+peaks2 <- function(x, span=9, threshold=0.1, strict=TRUE)
+{
+  # positions of maxima from peaks() package splus2R
+  idx.peaks <- which(peaks(x, span = span, strict = strict))
+
+  # If peaks() finds no maxima, no further checks are necessary.
+  if (length(idx.peaks)==0)
+  {
+    return(which(FALSE))
+  }
+
+  # interval boundaries in which we check for significance
+  idx.min <- pmax(idx.peaks-span, 1)
+  idx.max <- pmin(idx.peaks+span, length(x))
+
+  # check for minimum in interval
+  min_ <- function(idx.1, idx.2)
+  {
+    return(min(x[idx.1:idx.2]))
+  }
+
+  min.vicinity <- mapply(min_, idx.1=idx.min, idx.2=idx.max)
+  relative.change <- abs(x[idx.peaks]-min.vicinity)/pmax(abs(x[idx.peaks]), abs(min.vicinity))
+
+  # positions of maxima from peaks() which are also significant
+  idx.peaks2 <- idx.peaks[which(relative.change > threshold)]
+
+  return(idx.peaks2)
+}
+
+#' Return position of minima.
+#'
+#' @param x time series
+#'
+#' @return position of minima in <x>
+#'
+#' @export
+idxMin <- function(x)
+{
+  #idx <- which(diff(sign(diff(x)))==2)+1    # too simplistic
+  idx <- peaks2(-x, span = 9, threshold=0.05, strict = TRUE)    # minimum within +/-4 days
+  return(idx)
+}
+
+#' Return position of maxima.
+#'
+#' @param x time series
+#'
+#' @return position of maxima in <x>
+#'
+#' @export
+idxMax <- function(x)
+{
+  #idx <- which(diff(sign(diff(x)))==-2)+1    # too simplistic
+  idx <- peaks2(x, span = 9, threshold=0.05, strict = TRUE)    # maximum within +/-4 days
+  return(idx)
+}
+
+#' Return position of all-time-lows.
+#'
+#' @param x time series
+#'
+#' @return position of minima in <x> which are also all-time-lows
+#'
+#' @export
+idxATL <- function(x)
+{
+  isATL <- function(idx, x)
+  {
+    return( min(x[1:idx])/x[idx] == 1)
+  }
+
+  is.atl <- sapply(1:length(x), isATL, x=x)
+  idx.min <- idxMin(x)
+  idx.atl <- idx.min[which(is.atl[idx.min])]
+
+  return(idx.atl)
+}
+
+#' Return position of all-time-highs.
+#'
+#' @param x time series
+#'
+#' @return position of maxima in <x> which are also all-time-highs
+#'
+#' @export
+idxATH <- function(x)
+{
+  isATH <- function(idx, x)
+  {
+    return( max(x[1:idx])/x[idx] == 1)
+  }
+
+  is.ath <- sapply(1:length(x), isATH, x=x)
+  idx.max <- idxMax(x)
+  idx.ath <- idx.max[which(is.ath[idx.max])]
+
+  return(idx.ath)
+}
+
+#' Auxiliary function for OneTwoThreeExit().
+#'
+#' @param idx position in time series <x>
+#' @param x time series
+#'
+#' @return Boolean. Should we sell?
+OneTwoThreeSell <- function(idx, x)
+{
+  # minima and maxima differ by at least 0.5%
+  threshold <- 0.005
+
+  idx.min <- idxMin(x)
+  idx.max <- idxMax(x)
+
+  last.min <- tail(idx.min[which(idx.min < idx)], n=1)
+  last.max <- tail(idx.max[which(idx.max < idx)], n=1)
+
+  # Is x falling and lower than the last minimum? And it is not a minimum.
+  return((last.min < last.max) && (x[last.min]*(1+threshold) < x[last.max]) && (x[idx] < x[last.min]) && !(idx %in% idx.min))
+}
+
+#' Auxiliary function for OneTwoThreeEntry().
+#'
+#' @param idx position in time series <x>
+#' @param x time series
+#'
+#' @return  Boolean. Should we buy?
+OneTwoThreeBuy <- function(idx, x)
+{
+  # minima and maxima differ by at least 0.5%
+  threshold <- 0.005
+
+  idx.min <- idxMin(x)
+  idx.max <- idxMax(x)
+
+  last.min <- tail(idx.min[which(idx.min < idx)], n=1)
+  last.max <- tail(idx.max[which(idx.max < idx)], n=1)
+
+  # Is x rising and higher than the last maximum? And it is not a maximum
+  return((last.min > last.max) && (x[last.min]*(1+threshold) < x[last.max]) && (x[idx] > x[last.max]) && !(idx %in% idx.max))
+}
+
+#' Position of 1-2-3 Top. We are past the second maximum and should sell here.
+#'
+#' @param x time series
+#'
+#' @return position of 1-2-3 exit.
+#'
+#' @export
+OneTwoThreeExit <- function(x)
+{
+  n <- length(x)
+  idx <- 1:n
+
+  # find the first (!) sell signal
+  sell <- unlist(lapply(idx, OneTwoThreeSell, x=x))
+  sell.shift <- c(FALSE, sell)
+  sell.shift <- sell.shift[1:n]
+  sell <- (sell & !sell.shift)
+
+  return(which(sell))
+}
+
+#' Position of 1-2-3 Bottom. We are past the second minimum and should buy here.
+#'
+#' @param x time series
+#'
+#' @return position of 1-2-3 entry.
+#'
+#' @export
+OneTwoThreeEntry <- function(x)
+{
+  n <- length(x)
+  idx <- 1:n
+
+  # find the first (!) buy signal
+  buy <- unlist(lapply(idx, OneTwoThreeBuy, x=x))
+  buy.shift <- c(FALSE, buy)
+  buy.shift <- buy.shift[1:n]
+  buy <- (buy & !buy.shift)
+
+  return(which(buy))
+}
+
+#' Position of Savitzky-Golay exit.
+#'
+#' We smooth heavily with a Savitzky-Golay filter. If we still see a top, it is time to sell. The smoothing helps to avoid bear traps.
+#' Works only in high (!) Mayer Multiple environments. Reacts faster than moving averages since not trailing.
+#' The aim is not to sell at the top, but about 10% to 20% below.
+#'
+#' @param x time series
+#'
+#' @return position of Savitzky-Golay exit.
+#'
+#' @export
+SavitzkyGolayExit <- function(x)
+{
+  n.sg <- 47    # length of Savitzky-Golay filter
+  smooth <- sgolayfilt(x, p=4, n=n.sg)
+  idx <- idxMax(smooth)
+
+  return(idx)
+}
+
+#' Position of Savitzky-Golay entry.
+#'
+#' We smooth heavily with a Savitzky-Golay filter. If we still see a bottom, it is time to buy. The smoothing helps to avoid bull traps.
+#' Works only in low (!) Mayer Multiple environments. Reacts faster than moving averages since not trailing.
+#' The aim is not to buy at the bottom, but about 10% to 20% above.
+#'
+#' @param x time series
+#'
+#' @return position of Savitzky-Golay entry
+#'
+#' @export
+SavitzkyGolayEntry <- function(x)
+{
+  n.sg <- 47    # length of Savitzky-Golay filter
+  smooth <- sgolayfilt(x, p=4, n=n.sg)
+  idx <- idxMin(smooth)
+
+  return(idx)
+}
+
+#' Number of days since the last 1-2-3 exit signal.
+#'
+#' @param price daily price
+#'
+#' @return days since last exit
+#'
+#' @export
+daysSinceLastExit <- function(price)
+{
+  # Some smoothing in order to remove minor extrema.
+  # Savitzky-Golay (p=4, n=11) good. SMA bad since it shifts extrema.
+  price <- sgolayfilt(price, p=4, n=11)
+
+  # 1-2-3 exit signals
+  idx.sell <- OneTwoThreeExit(price)
+
+  # auxiliary function
+  daysSinceLastExit_ <- function(idx)
+  {
+    idx.sell.before <- idx.sell[which(idx.sell <= idx)]
+
+    if (length(idx.sell.before) == 0) {
+      idx.sell.last <- NA
+    } else {
+      idx.sell.last <- max(idx.sell.before)
+    }
+
+    days <- idx - idx.sell.last
+
+    return(days)
+  }
+
+  days <- unlist(lapply(1:length(price), daysSinceLastExit_))
+
+  return(days)
+}
+
+#' Number of days since the last 1-2-3 entry signal.
+#'
+#' @param price daily price
+#'
+#' @return days since last entry
+#'
+#' @export
+daysSinceLastEntry <- function(price)
+{
+  # Some smoothing in order to remove minor extrema.
+  # Savitzky-Golay (p=4, n=11) good. SMA bad since it shifts extrema.
+  price <- sgolayfilt(price, p=4, n=11)
+
+  # 1-2-3 entry signals
+  idx.buy <- OneTwoThreeEntry(price)
+
+  # auxiliary function
+  daysSinceLastEntry_ <- function(idx)
+  {
+    idx.buy.before <- idx.buy[which(idx.buy <= idx)]
+
+    if (length(idx.buy.before) == 0) {
+      idx.buy.last <- NA
+    } else {
+      idx.buy.last <- max(idx.buy.before)
+    }
+
+    days <- idx - idx.buy.last
+
+    return(days)
+  }
+
+  days <- unlist(lapply(1:length(price), daysSinceLastEntry_))
+
+  return(days)
+}
+
+#' Number of days since the last Savitzky-Golay exit signal.
+#'
+#' @param price daily price
+#'
+#' @return days since last exit
+#'
+#' @export
+daysSinceLastSavitzkyGolayExit <- function(price)
+{
+  # Savitzky-Golay exit signals
+  idx.sell <- SavitzkyGolayExit(price)
+
+  # auxiliary function
+  daysSinceLastExit_ <- function(idx)
+  {
+    idx.sell.before <- idx.sell[which(idx.sell <= idx)]
+
+    if (length(idx.sell.before) == 0) {
+      idx.sell.last <- NA
+    } else {
+      idx.sell.last <- max(idx.sell.before)
+    }
+
+    days <- idx - idx.sell.last
+
+    return(days)
+  }
+
+  days <- unlist(lapply(1:length(price), daysSinceLastExit_))
+
+  return(days)
+}
+
+#' Number of days since the last Savitzky-Golay entry signal.
+#'
+#' @param price daily price
+#'
+#' @return days since last entry
+#'
+#' @export
+daysSinceLastSavitzkyGolayEntry <- function(price)
+{
+  # Savitzky-Golay entry signals
+  idx.buy <- SavitzkyGolayEntry(price)
+
+  # auxiliary function
+  daysSinceLastEntry_ <- function(idx)
+  {
+    idx.buy.before <- idx.buy[which(idx.buy <= idx)]
+
+    if (length(idx.buy.before) == 0) {
+      idx.buy.last <- NA
+    } else {
+      idx.buy.last <- max(idx.buy.before)
+    }
+
+    days <- idx - idx.buy.last
+
+    return(days)
+  }
+
+  days <- unlist(lapply(1:length(price), daysSinceLastEntry_))
+
+  return(days)
+}
+
+#' Filter for time range.
+#'
+#' @param data data frame with a column <date>
+#' @param from start of the time window
+#' @param to end of the time window
+#'
+#' @return data frame with rows corresponding to the specified time range
+#'
+#' @export
+filterTimeRange <- function(data, from = '2017-01-01', to = '2017-12-31')
+{
+  data <- data[which(data$date>=from),]
+  data <- data[which(data$date<=to),]
+
+  return(data)
+}
+
+#' Filter for past week.
+#'
+#' @param data data frame with a column <date>
+#'
+#' @return data frame with rows corresponding to days of the past week
+#'
+#' @export
+filterPastWeek <- function(data)
+{
+  today <- Sys.Date()
+  data <- filterTimeRange(data, today-7, today)
+  return(data)
+}
+
+#' Filter for past month.
+#'
+#' @param data data frame with a column <date>
+#'
+#' @return data frame with rows corresponding to days of the past month
+#'
+#' @export
+filterPastMonth <- function(data)
+{
+  today <- Sys.Date()
+  data <- filterTimeRange(data, today-30, today)
+  return(data)
+}
+
+#' Filter for past year.
+#'
+#' @param data data frame with a column <date>
+#'
+#' @return data frame with rows corresponding to days of the past year
+#'
+#' @export
+filterPastYear <- function(data)
+{
+  today <- Sys.Date()
+  data <- filterTimeRange(data, today-365, today)
+  return(data)
+}
+
+#' Append summary sheet.
+#'
+#' Appends a single row with summary statistics for one specific cryptocurrency.
+#' Note we assume the data frame <summary.sheet> already exists.
+#'
+#' @param data data frame with historical data and technical indicators of a specific cryptocurrency
+#' @param id cryptocurrency ID
+#' @param vs_currency currency in which price should be reported
+#'
+#' @return None
+#'
+#' @export
+appendSummarySheet <- function(data,  id = 'crypto', vs_currency = 'fiat')
+{
+  # initialize empty row
+  row <- data.frame(id, vs_currency, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  colnames(row) <- c('id', 'vs_currency', 'price', 'price.change.1', 'price.change.7', 'price.change.30', 'MM50', 'MM50.min.7', 'MM50.max.7', 'MM50.quantile', 'MM50.quantile.05', 'MM50.quantile.10', 'MM50.quantile.90', 'MM50.quantile.95', 'MM200', 'MM200.min.7', 'MM200.max.7', 'MM200.quantile', 'MM200.quantile.05', 'MM200.quantile.10', 'MM200.quantile.90', 'MM200.quantile.95', 'days.since.last.entry', 'days.since.last.exit')
+
+  # fill price and changes directly from API
+  current <- currentData(id, vs_currency)
+  row$price <- current$price
+  row$price.change.1 <- current$price_change_percentage_24h
+  row$price.change.7 <- current$price_change_percentage_7d
+  row$price.change.30 <- current$price_change_percentage_30d
+
+  # fill Mayer Multiples and its min/max
+  idx <- which(data$date == Sys.Date())    # We assume todays data exist. It was explicitly added.
+
+  row$MM50 <- data$MM50[idx]
+  last.week <- data$MM50[seq(idx-7, idx, 1)]    # We assume there is no gap in the last week.
+  row$MM50.min.7 <- min(last.week)
+  row$MM50.max.7 <- max(last.week)
+  # Determine quantile i.e. what fraction is below todays MM50 value.
+  mm50 <- data$MM50[which(!is.na(data$MM50))]
+  row$MM50.quantile <- 100*length(which(mm50 < data$MM50[idx]))/length(mm50)
+  # Determine 5%, 10%, 90% and 95% quantiles i.e. possible entry/exit thresholds.
+  row$MM50.quantile.05 <- quantile(data$MM50, probs = c(0.05), na.rm = TRUE)
+  row$MM50.quantile.10 <- quantile(data$MM50, probs = c(0.10), na.rm = TRUE)
+  row$MM50.quantile.90 <- quantile(data$MM50, probs = c(0.90), na.rm = TRUE)
+  row$MM50.quantile.95 <- quantile(data$MM50, probs = c(0.95), na.rm = TRUE)
+
+  row$MM200 <- data$MM200[idx]
+  last.week <- data$MM200[seq(idx-7, idx, 1)]    # We assume there is no gap in the last week.
+  row$MM200.min.7 <- min(last.week)
+  row$MM200.max.7 <- max(last.week)
+  # Determine quantile i.e. what fraction is below todays MM200 value.
+  mm200 <- data$MM200[which(!is.na(data$MM200))]
+  row$MM200.quantile <- 100*length(which(mm200 < data$MM200[idx]))/length(mm200)
+  # Determine 5%, 10%, 90% and 95% quantiles i.e. possible entry/exit thresholds.
+  row$MM200.quantile.05 <- quantile(data$MM200, probs = c(0.05), na.rm = TRUE)
+  row$MM200.quantile.10 <- quantile(data$MM200, probs = c(0.10), na.rm = TRUE)
+  row$MM200.quantile.90 <- quantile(data$MM200, probs = c(0.90), na.rm = TRUE)
+  row$MM200.quantile.95 <- quantile(data$MM200, probs = c(0.95), na.rm = TRUE)
+
+  # add days since last 1-2-3 entry/exit
+  row$days.since.last.entry <- data$days.since.last.entry[idx]
+  row$days.since.last.exit <- data$days.since.last.exit[idx]
+
+  # append to existing summary sheet data
+  summary.sheet <<- rbind(summary.sheet, row)
+}
+
+#' Get cell colours for summary sheet.
+#'
+#' Returns a data frame of same dimensions as <summary.sheet> containing the background colours (light/dark green/red).
+#' Note we assume the data frame <summary.sheet> already exists.
+#'
+#' @return None
+#'
+#' @export
+summarySheetColours <- function()
+{
+  # thresholds
+  price.change.1 <- 30.0
+  price.change.2 <- 60.0
+
+  # mayer.multiple.max.2 <- 1.8
+  # mayer.multiple.max.1 <- 1.5
+  # mayer.multiple.min.1 <- -1.5
+  # mayer.multiple.min.2 <- -1.8
+
+  # These Mayer Multiple cutoffs correspond roughly to the 5%, 10%, 90% and 95% quantiles in Bitcoin and Ethereum.
+  mayer.multiple.max.2 <- 2.2
+  mayer.multiple.max.1 <- 1.6
+  mayer.multiple.min.1 <- -0.8
+  mayer.multiple.min.2 <- -1.1
+
+  quantile.max.2 <- 95.0
+  quantile.max.1 <- 90.0
+  quantile.min.1 <- 10.0
+  quantile.min.2 <- 5.0
+
+  days.since.1 <- 0
+  days.since.2 <- 3
+
+  # fill with white
+  d <- dim(summary.sheet)
+  colours <- matrix(rep('white',(d[1]*d[2])))
+  dim(colours) <- d
+  colnames(colours) <- colnames(summary.sheet)
+  colours <- data.frame(colours, stringsAsFactors=FALSE)
+
+  # check changes
+  idx <- which(summary.sheet$price.change.1 > price.change.1)
+  colours$price.change.1[idx] <- 'lightred'
+  idx <- which(summary.sheet$price.change.1 < -price.change.1)
+  colours$price.change.1[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$price.change.1 > price.change.2)
+  colours$price.change.1[idx] <- 'darkred'
+  idx <- which(summary.sheet$price.change.1 < -price.change.2)
+  colours$price.change.1[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$price.change.7 > price.change.1)
+  colours$price.change.7[idx] <- 'lightred'
+  idx <- which(summary.sheet$price.change.7 < -price.change.1)
+  colours$price.change.7[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$price.change.7 > price.change.2)
+  colours$price.change.7[idx] <- 'darkred'
+  idx <- which(summary.sheet$price.change.7 < -price.change.2)
+  colours$price.change.7[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$price.change.30 > price.change.1)
+  colours$price.change.30[idx] <- 'lightred'
+  idx <- which(summary.sheet$price.change.30 < -price.change.1)
+  colours$price.change.30[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$price.change.30 > price.change.2)
+  colours$price.change.30[idx] <- 'darkred'
+  idx <- which(summary.sheet$price.change.30 < -price.change.2)
+  colours$price.change.30[idx] <- 'darkgreen'
+
+  # check Mayer Multiples
+  idx <- which(summary.sheet$MM50 > mayer.multiple.max.1)
+  colours$MM50[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM50 < mayer.multiple.min.1)
+  colours$MM50[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM50 > mayer.multiple.max.2)
+  colours$MM50[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM50 < mayer.multiple.min.2)
+  colours$MM50[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$MM50.max.7 > mayer.multiple.max.1)
+  colours$MM50.max.7[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM50.min.7 < mayer.multiple.min.1)
+  colours$MM50.min.7[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM50.max.7 > mayer.multiple.max.2)
+  colours$MM50.max.7[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM50.min.7 < mayer.multiple.min.2)
+  colours$MM50.min.7[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$MM50.quantile > quantile.max.1)
+  colours$MM50.quantile[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM50.quantile < quantile.min.1)
+  colours$MM50.quantile[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM50.quantile > quantile.max.2)
+  colours$MM50.quantile[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM50.quantile < quantile.min.2)
+  colours$MM50.quantile[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$MM200 > mayer.multiple.max.1)
+  colours$MM200[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM200 < mayer.multiple.min.1)
+  colours$MM200[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM200 > mayer.multiple.max.2)
+  colours$MM200[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM200 < mayer.multiple.min.2)
+  colours$MM200[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$MM200.max.7 > mayer.multiple.max.1)
+  colours$MM200.max.7[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM200.min.7 < mayer.multiple.min.1)
+  colours$MM200.min.7[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM200.max.7 > mayer.multiple.max.2)
+  colours$MM200.max.7[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM200.min.7 < mayer.multiple.min.2)
+  colours$MM200.min.7[idx] <- 'darkgreen'
+
+  idx <- which(summary.sheet$MM200.quantile > quantile.max.1)
+  colours$MM200.quantile[idx] <- 'lightred'
+  idx <- which(summary.sheet$MM200.quantile < quantile.min.1)
+  colours$MM200.quantile[idx] <- 'lightgreen'
+
+  idx <- which(summary.sheet$MM200.quantile > quantile.max.2)
+  colours$MM200.quantile[idx] <- 'darkred'
+  idx <- which(summary.sheet$MM200.quantile < quantile.min.2)
+  colours$MM200.quantile[idx] <- 'darkgreen'
+
+  # check days since entry/exit
+  idx <- which(summary.sheet$days.since.last.exit <= days.since.2)
+  colours$days.since.last.exit[idx] <- 'lightred'
+  idx <- which(summary.sheet$days.since.last.exit <= days.since.1)
+  colours$days.since.last.exit[idx] <- 'darkred'
+
+  idx <- which(summary.sheet$days.since.last.entry <= days.since.2)
+  colours$days.since.last.entry[idx] <- 'lightgreen'
+  idx <- which(summary.sheet$days.since.last.entry <= days.since.1)
+  colours$days.since.last.entry[idx] <- 'darkgreen'
+
+  return(colours)
+}

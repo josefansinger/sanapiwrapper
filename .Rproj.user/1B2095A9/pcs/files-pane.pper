@@ -1,0 +1,9 @@
+{
+    "path" : "~/Code/CryptoCurrencies/sanapiwrapper",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}
