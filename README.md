@@ -6,6 +6,7 @@ install.packages("devtools")
 install.packages("roxygen2")
 install.packages("jsonlite")
 install.packages("tidyr")
+install.packages("testthat")
 
 library(devtools)
 install_github("ropensci/ghql")

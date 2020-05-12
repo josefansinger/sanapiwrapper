@@ -11,3 +11,5 @@ Imports:
     ghql,
     tidyr,
     jsonlite
+Suggests:
+    testthat
