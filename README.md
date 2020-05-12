@@ -3,7 +3,7 @@
 Wrapper functions for Santiment GraphQL API.
 
 ```
-git clone ...
+git clone https://github.com/josefansinger/sanapiwrapper.git
 cd santimentapiwrapper
 make
 ```
