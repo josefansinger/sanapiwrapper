@@ -17,3 +17,5 @@ git clone https://github.com/josefansinger/sanapiwrapper.git
 cd sanapiwrapper
 make
 ```
+
+[![Travis build status](https://travis-ci.com/josefansinger/sanapiwrapper.svg?branch=master)](https://travis-ci.com/josefansinger/sanapiwrapper)
