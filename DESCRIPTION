@@ -1,7 +1,7 @@
 Package: sanapiwrapper
 Version: 0.1
-Date: 2020-05-12
-Title: Josef Ansinger
+Date: 2020-05-13
+Title: sanapiwrapper
 Description: Wrapper functions for Santiment GraphQL API.
 Author: Josef Ansinger <josef.ansinger@gmx.de>
 Maintainer: Josef Ansinger <josef.ansinger@gmx.de>
