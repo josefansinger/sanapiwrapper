@@ -5,5 +5,6 @@ sanapiwrapper.pdf: R/sanapiwrapper.R
 	R -e 'devtools::check()'
 	R -e 'devtools::test()'
 	R -e 'devtools::document()'
-	rm -f doc/sanapiwrapper.pdf
-	R CMD Rd2pdf --no-preview -o doc/sanapiwrapper.pdf .
+	R -e 'devtools::build_manual()'
+	rm -f man/*.pdf
+	cp ../sanapiwrapper*.pdf man/sanapiwrapper.pdf
