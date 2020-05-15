@@ -4,19 +4,18 @@ Wrapper of the [GraphQL](https://graphql.org) based [Santiment API](https://neur
 
 ## installation
 
-Best install the following R packages by hand.
+First install the following R packages by hand.
 ```
-install.packages("devtools")
-install.packages("roxygen2")
-install.packages("jsonlite")
-install.packages("tidyr")
-install.packages("testthat")
+install.packages(c("devtools", "roxygen2", "jsonlite", "tidyr", "testthat"))
 
 library(devtools)
 install_github("ropensci/ghql")
 ```
-
-Then clone the repository and run the make file.
+Download the `tar.gz` file and run on the command line.
+```
+R CMD INSTALL sanapiwrapper_0.2.tar.gz
+```
+Alternatively, clone the repository and run the make file.
 ```
 git clone https://github.com/josefansinger/sanapiwrapper.git
 cd sanapiwrapper
