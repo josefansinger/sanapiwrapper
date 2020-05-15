@@ -210,8 +210,7 @@ santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01'
 {
   # Check if the metric is available for this project. If not, return a constant vector.
   available.slugs <- availableSlugs(metric)
-  #if (!(slug %in% available.slugs))
-  if ((!(slug %in% available.slugs)) || (slug=='eos'))    # EOS phased out. Remove after 1/06/2020.
+  if (!(slug %in% available.slugs))
   {
     dates <- seq(as.Date(from), as.Date(to), by=1)
     data <- data.frame(dates, 1)
