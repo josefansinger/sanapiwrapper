@@ -254,7 +254,7 @@ santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01'
   }
   
   # generate query string
-  query_string <- paste0('query MyQuery($metric: String = \"daily_active_addresses\", $slug: String = \"bitcoin\", $from: String = \"2019-01-01T00:00:00Z\", $to: String = \"2020-01-01T00:00:00Z\", $aggregation: String = \"NULL\") {
+  query_string <- paste0('query MyQuery($metric: String = \"daily_active_addresses\", $slug: String = \"bitcoin\", $from: String = \"2019-01-01T00:00:00Z\", $to: String = \"2020-01-01T23:59:59Z\", $aggregation: String = \"NULL\") {
     getMetric(metric: $metric) {
       timeseriesData(
         selector: {slug: $slug', selector_option_, '}
@@ -272,17 +272,17 @@ santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01'
   # avoids complexity error https://github.com/santiment/san-sdk/issues/18
   if (as.Date(from_) < as.Date('2013-01-01'))
   {
-    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = "2012-12-31T00:00:00Z", aggregation = aggregation))
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = "2012-12-31T23:59:59Z", aggregation = aggregation))
     data.1 <- result$data$getMetric$timeseriesData
     
-    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = "2013-01-01T00:00:00Z", to = paste0(to_, "T00:00:00Z"), aggregation = aggregation))
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = "2013-01-01T00:00:00Z", to = paste0(to_, "T23:59:59Z"), aggregation = aggregation))
     data.2 <- result$data$getMetric$timeseriesData
     
     data <- rbind(data.1, data.2)
   }
   else
   {
-    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = paste0(to_, "T00:00:00Z"), aggregation = aggregation))
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = paste0(to_, "T23:59:59Z"), aggregation = aggregation))
     data <- result$data$getMetric$timeseriesData
   }
   
