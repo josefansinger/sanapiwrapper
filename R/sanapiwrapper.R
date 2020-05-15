@@ -197,7 +197,7 @@ accessRestrictions <- function(name)
 #' @param slug project (e.g. ethereum, bitcoin, tezos ...)
 #' @param from start of the time window
 #' @param to end of the time window
-#' @param aggregation aggregation (SUM, AVG, MEDIAN, MIN, MAX)
+#' @param aggregation aggregation (SUM, AVG, MEDIAN, MIN, MAX, FIRST, LAST)
 #' @param selector_option optional string for selector field, for example "holdersCount:10" for "amount_in_top_holders" metric, see "selector: {slug: "ethereum", holdersCount:10}"
 #'
 #' @return table with columns (date, <metric>)
@@ -206,105 +206,83 @@ accessRestrictions <- function(name)
 #' santimentMetric('dev_activity', 'ethereum')
 #'
 #' @export
-santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01', aggregation = 'SUM', selector_option = NULL)
+santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01', aggregation = 'SUM', selector_option)
 {
-  # Check if the metric is available for this project. If not, return a constant vector.
+  # Check if the metric is available for this project.
+  # If not, return a zero vector.
   available.slugs <- availableSlugs(metric)
   if (!(slug %in% available.slugs))
   {
     dates <- seq(as.Date(from), as.Date(to), by=1)
-    data <- data.frame(dates, 1)
+    data <- data.frame(dates, 0)
     colnames(data) <- c('date', metric)
     
     return(data)
   }
   
-  # get the earliest date for the metric and correct <from> if necessary
+  # correct time window
+  from_ <- from
+  to_ <- to
+  
+  # get the earliest date for the metric
   available.since <- availableSince(metric, slug)
-  from.corrected <- as.character(max(as.Date(available.since), as.Date(from)))
+  from_ <- as.character(max(as.Date(available.since), as.Date(from_)))
+  
+  # check access restrictions
+  restrictions <- accessRestrictions(metric)
+  if (restrictions$isRestricted)
+  {
+    from_ <- as.character(max(as.Date(restrictions$restrictedFrom), as.Date(from_)))
+    to_ <- as.character(min(as.Date(restrictions$restrictedTo), as.Date(to_)))
+  }
+  
+  # correct aggregation
+  # TODO: check with availableAggregations
+  if (metric == 'amount_in_top_holders')
+  {
+    aggregation <- 'LAST'
+  }
   
   # set optional selector parameters
-  if (is.null(selector_option))
+  if (missing(selector_option))
   {
-    selector_option_string = ""
+    selector_option_ = ""
   }
   else
   {
-    selector_option_string = paste0(", ", selector_option)
+    selector_option_ = paste0(", ", selector_option)
   }
   
-  # for huge queries (prior 2013) run two separate queries
-  # avoids complexity error https://github.com/santiment/san-sdk/issues/18
-  if (as.Date(from.corrected) < as.Date('2013-01-01'))
-  {
-    result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
+  # generate query string
+  query_string <- paste0('query MyQuery($metric: String = \"daily_active_addresses\", $slug: String = \"bitcoin\", $from: String = \"2019-01-01T00:00:00Z\", $to: String = \"2020-01-01T00:00:00Z\", $aggregation: String = \"NULL\") {
+    getMetric(metric: $metric) {
       timeseriesData(
-        selector: {slug: "', slug, '"', selector_option_string, '}
-        from: "', from.corrected, 'T00:00:00Z"
-        to: "2012-12-31T00:00:00Z"
+        selector: {slug: $slug', selector_option_, '}
+        from: $from
+        to: $to
         interval:"1d"
-        aggregation:', aggregation, ') {
+        aggregation: $aggregation) {
           datetime
           value
         }
       }
-    }'))
+    }')
+  
+  # for huge queries (prior 2013) run two separate queries and combine
+  # avoids complexity error https://github.com/santiment/san-sdk/issues/18
+  if (as.Date(from_) < as.Date('2013-01-01'))
+  {
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = "2012-12-31T00:00:00Z", aggregation = aggregation))
     data.1 <- result$data$getMetric$timeseriesData
     
-    result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
-      timeseriesData(
-        selector: {slug: "', slug, '"', selector_option_string, '}
-        from: "2013-01-01T00:00:00Z"
-        to: "', to, 'T00:00:00Z"
-        interval:"1d"
-        aggregation:', aggregation, ') {
-          datetime
-          value
-        }
-      }
-    }'))
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = "2013-01-01T00:00:00Z", to = paste0(to_, "T00:00:00Z"), aggregation = aggregation))
     data.2 <- result$data$getMetric$timeseriesData
     
     data <- rbind(data.1, data.2)
   }
   else
   {
-    # quick fix for 'amount_in_top_holders' metric
-    # (for 'amount_in_top_holders' is 'aggregation' not allowed)
-    if (metric == 'amount_in_top_holders')
-    {
-      result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
-      timeseriesData(
-        selector: {slug: "', slug, '"', selector_option_string, '}
-        from: "', from.corrected, 'T00:00:00Z"
-        to: "', to, 'T00:00:00Z"
-        interval:"1d") {
-          datetime
-          value
-        }
-      }
-    }'))
-    }
-    else
-    {
-      result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
-      timeseriesData(
-        selector: {slug: "', slug, '"', selector_option_string, '}
-        from: "', from.corrected, 'T00:00:00Z"
-        to: "', to, 'T00:00:00Z"
-        interval:"1d"
-        aggregation:', aggregation, ') {
-          datetime
-          value
-        }
-      }
-    }'))
-    }
-    
+    result <- santimentQuery(query_string, list(metric = metric, slug = slug, from = paste0(from_, "T00:00:00Z"), to = paste0(to_, "T00:00:00Z"), aggregation = aggregation))
     data <- result$data$getMetric$timeseriesData
   }
   

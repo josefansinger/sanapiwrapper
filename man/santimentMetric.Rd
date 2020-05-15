@@ -10,7 +10,7 @@ santimentMetric(
   from = "2019-01-01",
   to = "2020-01-01",
   aggregation = "SUM",
-  selector_option = NULL
+  selector_option
 )
 }
 \arguments{
@@ -22,7 +22,7 @@ santimentMetric(
 
 \item{to}{end of the time window}
 
-\item{aggregation}{aggregation (SUM, AVG, MEDIAN, MIN, MAX)}
+\item{aggregation}{aggregation (SUM, AVG, MEDIAN, MIN, MAX, FIRST, LAST)}
 
 \item{selector_option}{optional string for selector field, for example "holdersCount:10" for "amount_in_top_holders" metric, see "selector: {slug: "ethereum", holdersCount:10}"}
 }
