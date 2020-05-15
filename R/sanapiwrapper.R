@@ -5,7 +5,8 @@
 #' @param key API key
 #' @param url GraphQL server URL
 #'
-#' @examples setSantimentVariables("y4i3n5xk6p")
+#' @examples
+#' setSantimentVariables("y4i3n5xk6p")
 #'
 #' @export
 setSantimentVariables <- function(key, url = "https://api.santiment.net/graphql")
@@ -89,16 +90,17 @@ santimentQuery <- function(query_string, query_variables)
 #'
 #' @return vector of available metrics
 #'
-#' @examples availableMetrics('ethereum')
+#' @examples
+#' availableMetrics('ethereum')
 #'
 #' @export
 availableMetrics <- function(slug)
 {
-  result <- santimentQuery(paste0('{
-    all_metrics_for_a_slug: projectBySlug(slug: "', slug, '") {
+  result <- santimentQuery('query MyQuery($slug: String = \"bitcoin\") {
+    all_metrics_for_a_slug: projectBySlug(slug: $slug) {
       availableTimeseriesMetrics
     }
-  }'))
+  }', list(slug = slug))
   data <- result$data$all_metrics_for_a_slug$availableTimeseriesMetrics
   
   return(data)
@@ -110,18 +112,19 @@ availableMetrics <- function(slug)
 #'
 #' @return vector of available slugs
 #'
-#' @examples availableSlugs('daily_active_addresses')
+#' @examples
+#' availableSlugs('daily_active_addresses')
 #'
 #' @export
 availableSlugs <- function(metric)
 {
-  result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
+  result <- santimentQuery('query MyQuery($metric: String = \"daily_active_addresses\") {
+    getMetric(metric: $metric) {
       metadata{
         availableSlugs
       }
     }
-  }'))
+  }', list(metric = metric))
   
   data <- result$data$getMetric$metadata$availableSlugs
   
@@ -135,16 +138,17 @@ availableSlugs <- function(metric)
 #'
 #' @return earliest date
 #'
-#' @examples availableSince('daily_active_addresses', 'ethereum')
+#' @examples
+#' availableSince('daily_active_addresses', 'ethereum')
 #'
 #' @export
 availableSince <- function(metric, slug)
 {
-  result <- santimentQuery(paste0('{
-    getMetric(metric:"', metric, '") {
-      availableSince(slug: "', slug, '")
+  result <- santimentQuery('query MyQuery($metric: String = \"daily_active_addresses\", $slug: String = \"ethereum\") {
+    getMetric(metric: $metric) {
+      availableSince(slug: $slug)
     }
-  }'))
+  }', list(metric = metric, slug = slug))
   available.since <- result$data$getMetric$availableSince
   available.since <- substr(available.since, 1, 10)
   
@@ -157,7 +161,8 @@ availableSince <- function(metric, slug)
 #'
 #' @return single row with columns (isRestricted, name, restrictedFrom, restrictedTo, type)
 #'
-#' @examples accessRestrictions('daily_active_addresses')
+#' @examples
+#' accessRestrictions('daily_active_addresses')
 #'
 #' @export
 accessRestrictions <- function(name)
@@ -197,7 +202,8 @@ accessRestrictions <- function(name)
 #'
 #' @return table with columns (date, <metric>)
 #'
-#' @examples santimentMetric('dev_activity', 'ethereum')
+#' @examples
+#' santimentMetric('dev_activity', 'ethereum')
 #'
 #' @export
 santimentMetric <- function(metric, slug, from = '2019-01-01', to = '2020-01-01', aggregation = 'SUM', selector_option = NULL)
