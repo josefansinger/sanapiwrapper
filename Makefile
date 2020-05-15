@@ -7,4 +7,6 @@ sanapiwrapper.pdf: R/sanapiwrapper.R
 	R -e 'devtools::document()'
 	R -e 'devtools::build_manual()'
 	rm -f man/*.pdf
-	cp ../sanapiwrapper*.pdf man/sanapiwrapper.pdf
+	cp ../sanapiwrapper*.pdf man
+	rm -f *.tar.gz
+	cp ../sanapiwrapper*.tar.gz .
