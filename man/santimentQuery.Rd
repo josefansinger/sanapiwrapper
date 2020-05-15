@@ -4,18 +4,25 @@
 \alias{santimentQuery}
 \title{Execute Santiment query.}
 \usage{
-santimentQuery(query_string)
+santimentQuery(query_string, query_variables)
 }
 \arguments{
 \item{query_string}{query string}
+
+\item{query_variables}{optional list of query variables}
 }
 \value{
-result
+query result
 }
 \description{
-A new GraphQL client is generated. A new query is generated, filled with the query string and then executed.
+A new GraphQL client is generated. A new query is generated, filled with the query string and (optional) variables, and then executed.
 }
 \examples{
-santimentQuery('{projectBySlug(slug: "santiment") {availableQueries}}')
+santimentQuery('{projectBySlug(slug: "ethereum") {availableQueries}}')
+
+string <- 'query MyQuery($slug: String = \"bitcoin\")
+           {projectBySlug(slug: $slug) {availableQueries}}'
+variables <- list(slug = 'ethereum')
+santimentQuery(string, variables)
 
 }

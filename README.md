@@ -31,7 +31,7 @@ library(sanapiwrapper)
 metric <- santimentMetric('daily_active_addresses', 'ethereum', '2020-01-01', '2020-04-01')
 ```
 
-Examples are listed in the [documentation](https://github.com/josefansinger/sanapiwrapper/blob/master/man/sanapiwrapper.pdf). Further [tests](https://github.com/josefansinger/sanapiwrapper/tree/master/tests/testthat) are run during the build process.
+Examples are listed in the [documentation](https://github.com/josefansinger/sanapiwrapper/blob/master/man/sanapiwrapper_0.1.pdf). Further [tests](https://github.com/josefansinger/sanapiwrapper/tree/master/tests/testthat) are run during the build process.
 
 
 [![Travis build status](https://travis-ci.com/josefansinger/sanapiwrapper.svg?branch=master)](https://travis-ci.com/josefansinger/sanapiwrapper)

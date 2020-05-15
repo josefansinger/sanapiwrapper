@@ -19,17 +19,24 @@ setSantimentVariables <- function(key, url = "https://api.santiment.net/graphql"
 
 #' Execute Santiment query.
 #'
-#' A new GraphQL client is generated. A new query is generated, filled with the query string and then executed.
-#'
+#' A new GraphQL client is generated. A new query is generated, filled with the query string and (optional) variables, and then executed.
+#' 
 #' @param query_string query string
+#' @param query_variables optional list of query variables
 #'
-#' @return result
+#' @return query result
 #'
-#' @examples santimentQuery('{projectBySlug(slug: "santiment") {availableQueries}}')
+#' @examples
+#' santimentQuery('{projectBySlug(slug: "ethereum") {availableQueries}}')
+#'
+#' string <- 'query MyQuery($slug: String = \"bitcoin\")
+#'            {projectBySlug(slug: $slug) {availableQueries}}'
+#' variables <- list(slug = 'ethereum')
+#' santimentQuery(string, variables)
 #'
 #' @import ghql jsonlite tidyr
 #' @export
-santimentQuery <- function(query_string)
+santimentQuery <- function(query_string, query_variables)
 {
   # use API URL if set
   if (Sys.getenv("SANTIMENT_API_URL")=="")
@@ -59,10 +66,17 @@ santimentQuery <- function(query_string)
   
   # new query
   query <- Query$new()
-  query$query('sanmetric', query_string)
+  query$query('myquery', query_string)
   
   # execute query
-  result <- client$exec(query$queries$sanmetric) %>% fromJSON()
+  if (missing(query_variables))
+  {
+    result <- client$exec(query$queries$myquery) %>% fromJSON()
+  }
+  else
+  {
+    result <- client$exec(query$queries$myquery, query_variables) %>% fromJSON()
+  }
   
   return(result)
 }

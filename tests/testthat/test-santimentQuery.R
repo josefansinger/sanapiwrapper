@@ -1,19 +1,37 @@
 context("execute a query")
 
 test_that("get available queries", {
-
+  
   result <- santimentQuery('{
     projectBySlug(slug: "ethereum") {
       availableQueries
     }
   }')
-
+  
   data <- result$data$projectBySlug$availableQueries
-
+  
   expect_equal(('getMetric' %in% data), TRUE)
   expect_equal(('gasUsed' %in% data), TRUE)
   expect_equal(('ethTopTransactions' %in% data), TRUE)
+  
+})
 
+test_that("get available queries (using query variables)", {
+  
+  string <- 'query MyQuery($slug: String = \"bitcoin\") {
+    projectBySlug(slug: $slug) {
+      availableQueries
+    }
+  }'
+  variables <- list(slug = 'ethereum')
+  result <- santimentQuery(string, variables)
+  
+  data <- result$data$projectBySlug$availableQueries
+  
+  expect_equal(('getMetric' %in% data), TRUE)
+  expect_equal(('gasUsed' %in% data), TRUE)
+  expect_equal(('ethTopTransactions' %in% data), TRUE)
+  
 })
 
 test_that("get available time series metrics", {
